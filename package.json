@@ -1,0 +1,13 @@
+{
+  "dependencies": {
+    "@tensorflow-models/coco-ssd": "^2.2.3",
+    "@tensorflow/tfjs": "^4.22.0",
+    "react-webcam": "^7.2.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.7",
+    "vite": "^5.1.4"
+  }
+}
