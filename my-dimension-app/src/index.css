@@ -1,0 +1,20 @@
+body {
+  margin: 0;
+  padding: 0;
+  font-family: sans-serif;
+  overflow: hidden; /* Prevent scrolling */
+}
+
+button {
+  margin: 5px;
+}
+
+video {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+canvas {
+  display: block;
+}
