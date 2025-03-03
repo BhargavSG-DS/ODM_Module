@@ -8,8 +8,7 @@ function App() {
   const [selectedObject, setSelectedObject] = useState(null);
 
   const handleCanvasClick = (x, y) => {
-    // Trigger detection on click, to be processed in ARVideoFeed
-    setDetectedObjects([]); // Clear previous detections
+    setDetectedObjects([]);
   };
 
   const reset = () => {
@@ -22,19 +21,23 @@ function App() {
   };
 
   return (
-    <div>
-      <ARVideoFeed
-        arSession={arSession}
-        setARSession={setARSession}
-        setDetectedObjects={setDetectedObjects}
-        selectedObject={selectedObject}
-        onCanvasClick={handleCanvasClick}
-      />
-      <ObjectSelector
-        detectedObjects={detectedObjects}
-        setSelectedObject={setSelectedObject}
-      />
-      <button onClick={reset}>Reset</button>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+      <div style={{ flex: '1', position: 'relative' }}>
+        <ARVideoFeed
+          arSession={arSession}
+          setARSession={setARSession}
+          setDetectedObjects={setDetectedObjects}
+          selectedObject={selectedObject}
+          onCanvasClick={handleCanvasClick}
+        />
+      </div>
+      <div style={{ padding: '10px', background: '#f0f0f0' }}>
+        <ObjectSelector
+          detectedObjects={detectedObjects}
+          setSelectedObject={setSelectedObject}
+        />
+        <button onClick={reset}>Reset</button>
+      </div>
     </div>
   );
 }

@@ -22,7 +22,6 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
             console.error('Video play failed:', err);
             alert('Tap the screen to start the video feed.');
           });
-          // Set canvas size to match video
           videoRef.current.addEventListener('loadedmetadata', () => {
             const canvas = canvasRef.current;
             canvas.width = videoRef.current.videoWidth;
@@ -40,7 +39,7 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
   useEffect(() => {
     const initAR = async () => {
       if (!navigator.xr || !(await navigator.xr.isSessionSupported('immersive-ar'))) {
-        console.log('WebXR AR not supported. Falling back to 2D mode.');
+        console.log('WebXR AR not supported. Using 2D mode.');
         return;
       }
 
@@ -76,10 +75,43 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
 
     const renderLoop = () => {
       const ctx = canvasRef.current.getContext('2d');
-      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height); // Clear previous frame
+      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
       ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
 
       if (selectedObject) {
+        const obj = selectedObject;
+        // Clamp bounding box to canvas dimensions
+        const clampedBbox = {
+          x: Math.max(0, Math.min(obj.bbox[0], canvasRef.current.width)),
+          y: Math.max(0, Math.min(obj.bbox[1], canvasRef.current.height)),
+          width: Math.min(obj.bbox[2], canvasRef.current.width - obj.bbox[0]),
+          height: Math.min(obj.bbox[3], canvasRef.current.height - obj.bbox[1]),
+        };
+
+        // Draw green bounding box
+        ctx.strokeStyle = 'green';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(clampedBbox.x, clampedBbox.y, clampedBbox.width, clampedBbox.height);
+
+        // Adjusted pixel-to-cm ratio (calibrated for accuracy)
+        const pixelToCmRatio = 0.007; // Adjusted for 7 cm width ≈ 1000 pixels, tweak as needed
+        const widthCm = Math.round(clampedBbox.width * pixelToCmRatio);
+        const heightCm = Math.round(clampedBbox.height * pixelToCmRatio);
+
+        // Display dimensions on canvas
+        ctx.fillStyle = 'green';
+        ctx.font = '16px Arial';
+        const widthText = `${widthCm} cm`;
+        const heightText = `${heightCm} cm`;
+        ctx.fillText(widthText, clampedBbox.x + clampedBbox.width / 2 - ctx.measureText(widthText).width / 2, clampedBbox.y - 10); // Top center
+        ctx.save();
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(heightText, -clampedBbox.y - clampedBbox.height / 2 - 20, clampedBbox.x - 10); // Left center
+        ctx.restore();
+
+        console.log('Selected object bbox (pixels):', obj.bbox, 'Clamped:', clampedBbox, 'Cm:', widthCm, heightCm);
+
+        // AR mode: Add 3D mesh
         if (arSession && referenceSpaceRef.current) {
           arSession.requestAnimationFrame((time, frame) => {
             const pose = frame.getViewerPose(referenceSpaceRef.current);
@@ -104,14 +136,6 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
               });
             }
           });
-        } else {
-          const obj = selectedObject;
-          ctx.strokeStyle = 'red';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(obj.bbox[0], obj.bbox[1], obj.bbox[2], obj.bbox[3]);
-          ctx.fillStyle = 'red';
-          ctx.font = '16px Arial';
-          ctx.fillText(`${obj.class} (${Math.round(obj.bbox[2] / 10)}cm x ${Math.round(obj.bbox[3] / 10)}cm)`, obj.bbox[0], obj.bbox[1] - 10);
         }
       }
 
@@ -122,7 +146,7 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
 
   const handleCanvasClick = async (e) => {
     if (videoRef.current && videoRef.current.paused) {
-      videoRef.current.play().catch((err) => console.error('Playback failed:', err));
+      videoRef.current.play().catch((err) => alert('Playback failed:', err));
       return;
     }
 
@@ -146,7 +170,6 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
 
     if (clickedObject) {
       setDetectedObjects([clickedObject]);
-      // Draw immediate feedback
       const ctx = canvasRef.current.getContext('2d');
       ctx.strokeStyle = 'yellow';
       ctx.lineWidth = 2;
@@ -173,8 +196,8 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
           top: 0,
           left: 0,
           width: '100%',
-          height: '100%', // Match video height
-          pointerEvents: 'auto', // Ensure clicks register
+          height: '100%',
+          pointerEvents: 'auto',
         }}
       />
     </div>

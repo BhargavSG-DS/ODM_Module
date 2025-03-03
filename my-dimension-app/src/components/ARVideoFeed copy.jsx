@@ -22,6 +22,11 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
             console.error('Video play failed:', err);
             alert('Tap the screen to start the video feed.');
           });
+          videoRef.current.addEventListener('loadedmetadata', () => {
+            const canvas = canvasRef.current;
+            canvas.width = videoRef.current.videoWidth;
+            canvas.height = videoRef.current.videoHeight;
+          });
         }
       } catch (error) {
         console.error('Camera access failed:', error);
@@ -34,7 +39,7 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
   useEffect(() => {
     const initAR = async () => {
       if (!navigator.xr || !(await navigator.xr.isSessionSupported('immersive-ar'))) {
-        console.log('WebXR AR not supported. Falling back to 2D mode.');
+        console.log('WebXR AR not supported. Using 2D mode.');
         return;
       }
 
@@ -70,9 +75,31 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
 
     const renderLoop = () => {
       const ctx = canvasRef.current.getContext('2d');
+      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
       ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
 
       if (selectedObject) {
+        const obj = selectedObject;
+        // Draw green bounding box in both AR and 2D modes
+        ctx.strokeStyle = 'green';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(obj.bbox[0], obj.bbox[1], obj.bbox[2], obj.bbox[3]);
+
+        // Improved pixel-to-cm conversion (calibrated for typical phone camera)
+        const pixelToCmRatio = 0.026; // Approx 1 pixel = 0.026 cm at 30 cm distance, adjust based on testing
+        const widthCm = Math.round(obj.bbox[2] * pixelToCmRatio);
+        const heightCm = Math.round(obj.bbox[3] * pixelToCmRatio);
+
+        // Display dimensions on canvas
+        ctx.fillStyle = 'green';
+        ctx.font = '16px Arial';
+        ctx.fillText(`${widthCm} cm`, obj.bbox[0] + obj.bbox[2] / 2 - 20, obj.bbox[1] - 10); // Top center
+        ctx.save();
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(`${heightCm} cm`, -obj.bbox[1] - obj.bbox[3] / 2 - 20, obj.bbox[0] - 10); // Left center
+        ctx.restore();
+
+        // AR mode: Add 3D mesh
         if (arSession && referenceSpaceRef.current) {
           arSession.requestAnimationFrame((time, frame) => {
             const pose = frame.getViewerPose(referenceSpaceRef.current);
@@ -97,14 +124,6 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
               });
             }
           });
-        } else {
-          const obj = selectedObject;
-          ctx.strokeStyle = 'red';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(obj.bbox[0], obj.bbox[1], obj.bbox[2], obj.bbox[3]);
-          ctx.fillStyle = 'red';
-          ctx.font = '16px Arial';
-          ctx.fillText(`${obj.class} (${Math.round(obj.bbox[2] / 10)}cm x ${Math.round(obj.bbox[3] / 10)}cm)`, obj.bbox[0], obj.bbox[1] - 10);
         }
       }
 
@@ -121,32 +140,53 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
 
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const x = (e.clientX - rect.left) * scaleX;
+    const y = (e.clientY - rect.top) * scaleY;
 
-    onCanvasClick(x, y); // Notify App.jsx
+    onCanvasClick(x, y);
 
     const objects = await detectObjects(videoRef.current);
+    console.log('Detected:', objects);
     setDetectedObjects(objects);
 
-    // Find the object clicked on
-    const clickedObject = objects.find(obj => 
+    const clickedObject = objects.find(obj =>
       x >= obj.bbox[0] && x <= obj.bbox[0] + obj.bbox[2] &&
       y >= obj.bbox[1] && y <= obj.bbox[1] + obj.bbox[3]
     );
 
     if (clickedObject) {
-      setDetectedObjects([clickedObject]); // Show only the clicked object
+      setDetectedObjects([clickedObject]);
+      const ctx = canvasRef.current.getContext('2d');
+      ctx.strokeStyle = 'yellow';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(clickedObject.bbox[0], clickedObject.bbox[1], clickedObject.bbox[2], clickedObject.bbox[3]);
+    } else {
+      alert('No object detected at this position. Try clicking a distinct object.');
     }
   };
 
   return (
-    <div style={{ position: 'relative' }}>
-      <video ref={videoRef} autoPlay muted playsInline style={{ width: '100%', height: 'auto' }} />
+    <div style={{ position: 'relative', width: '100%', height: 'auto' }}>
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        style={{ width: '100%', height: 'auto', display: 'block' }}
+      />
       <canvas
         ref={canvasRef}
         onClick={handleCanvasClick}
-        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: 'auto' }}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          pointerEvents: 'auto',
+        }}
       />
     </div>
   );
