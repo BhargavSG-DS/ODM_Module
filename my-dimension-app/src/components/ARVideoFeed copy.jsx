@@ -2,7 +2,7 @@ import { useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { detectObjects } from '../utils/tfUtils';
 
-function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObject, onCanvasClick }) {
+function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObject, onCanvasClick, onReset, onSelectObject }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const rendererRef = useRef(null);
@@ -11,6 +11,7 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
   const referenceSpaceRef = useRef(null);
 
   useEffect(() => {
+    console.log('ARVideoFeed mounted, selectedObject:', selectedObject);
     const startVideo = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -73,33 +74,57 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
   useEffect(() => {
     if (!videoRef.current || !canvasRef.current) return;
 
-    const renderLoop = () => {
+    let animationFrameId;
+    const renderLoop = async () => {
       const ctx = canvasRef.current.getContext('2d');
       ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
       ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
 
+      console.log('Render loop, selectedObject:', selectedObject);
+
       if (selectedObject) {
-        const obj = selectedObject;
-        // Draw green bounding box in both AR and 2D modes
+        const objects = await detectObjects(videoRef.current);
+        const trackedObject = objects.find(obj =>
+          obj.class === selectedObject.class &&
+          Math.abs(obj.bbox[0] - selectedObject.bbox[0]) < 50 &&
+          Math.abs(obj.bbox[1] - selectedObject.bbox[1]) < 50
+        ) || selectedObject;
+
+        const obj = trackedObject;
+        const clampedBbox = {
+          x: Math.max(0, Math.min(obj.bbox[0], canvasRef.current.width)),
+          y: Math.max(0, Math.min(obj.bbox[1], canvasRef.current.height)),
+          width: Math.min(obj.bbox[2], canvasRef.current.width - obj.bbox[0]),
+          height: Math.min(obj.bbox[3], canvasRef.current.height - obj.bbox[1]),
+        };
+
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+        ctx.fillRect(clampedBbox.x, clampedBbox.y, clampedBbox.width, clampedBbox.height);
+
         ctx.strokeStyle = 'green';
         ctx.lineWidth = 2;
-        ctx.strokeRect(obj.bbox[0], obj.bbox[1], obj.bbox[2], obj.bbox[3]);
+        ctx.strokeRect(clampedBbox.x, clampedBbox.y, clampedBbox.width, clampedBbox.height);
 
-        // Improved pixel-to-cm conversion (calibrated for typical phone camera)
-        const pixelToCmRatio = 0.026; // Approx 1 pixel = 0.026 cm at 30 cm distance, adjust based on testing
-        const widthCm = Math.round(obj.bbox[2] * pixelToCmRatio);
-        const heightCm = Math.round(obj.bbox[3] * pixelToCmRatio);
+        const distanceCm = obj.distanceCm || 100; // Fallback if depth fails
+        const fovHorizontalDeg = 60;
+        const fovVerticalDeg = fovHorizontalDeg * (canvasRef.current.height / canvasRef.current.width);
+        const widthRealCm = 2 * distanceCm * Math.tan((fovHorizontalDeg * Math.PI / 180) / 2);
+        const pixelToCmRatio = widthRealCm / canvasRef.current.width;
+        const widthCm = Math.round(clampedBbox.width * pixelToCmRatio);
+        const heightCm = Math.round(clampedBbox.height * pixelToCmRatio);
 
-        // Display dimensions on canvas
         ctx.fillStyle = 'green';
         ctx.font = '16px Arial';
-        ctx.fillText(`${widthCm} cm`, obj.bbox[0] + obj.bbox[2] / 2 - 20, obj.bbox[1] - 10); // Top center
+        const widthText = `${widthCm} cm`;
+        const heightText = `${heightCm} cm`;
+        ctx.fillText(widthText, clampedBbox.x + clampedBbox.width / 2 - ctx.measureText(widthText).width / 2, clampedBbox.y - 10);
         ctx.save();
         ctx.rotate(-Math.PI / 2);
-        ctx.fillText(`${heightCm} cm`, -obj.bbox[1] - obj.bbox[3] / 2 - 20, obj.bbox[0] - 10); // Left center
+        ctx.fillText(heightText, -clampedBbox.y - clampedBbox.height / 2 - 20, clampedBbox.x - 10);
         ctx.restore();
 
-        // AR mode: Add 3D mesh
+        console.log('Tracked object:', obj.class, 'BBox:', obj.bbox, 'Clamped:', clampedBbox, 'Distance:', distanceCm, 'Cm:', widthCm, heightCm);
+
         if (arSession && referenceSpaceRef.current) {
           arSession.requestAnimationFrame((time, frame) => {
             const pose = frame.getViewerPose(referenceSpaceRef.current);
@@ -127,9 +152,11 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
         }
       }
 
-      requestAnimationFrame(renderLoop);
+      animationFrameId = requestAnimationFrame(renderLoop);
     };
-    requestAnimationFrame(renderLoop);
+    animationFrameId = requestAnimationFrame(renderLoop);
+
+    return () => cancelAnimationFrame(animationFrameId);
   }, [arSession, selectedObject]);
 
   const handleCanvasClick = async (e) => {
@@ -147,24 +174,46 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
 
     onCanvasClick(x, y);
 
-    const objects = await detectObjects(videoRef.current);
-    console.log('Detected:', objects);
-    setDetectedObjects(objects);
+    try {
+      const objects = await detectObjects(videoRef.current);
+      console.log('Detected:', objects);
+      setDetectedObjects(objects);
 
-    const clickedObject = objects.find(obj =>
-      x >= obj.bbox[0] && x <= obj.bbox[0] + obj.bbox[2] &&
-      y >= obj.bbox[1] && y <= obj.bbox[1] + obj.bbox[3]
-    );
+      const clickedObject = objects.find(obj =>
+        x >= obj.bbox[0] && x <= obj.bbox[0] + obj.bbox[2] &&
+        y >= obj.bbox[1] && y <= obj.bbox[1] + obj.bbox[3]
+      );
 
-    if (clickedObject) {
-      setDetectedObjects([clickedObject]);
-      const ctx = canvasRef.current.getContext('2d');
-      ctx.strokeStyle = 'yellow';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(clickedObject.bbox[0], clickedObject.bbox[1], clickedObject.bbox[2], clickedObject.bbox[3]);
-    } else {
-      alert('No object detected at this position. Try clicking a distinct object.');
+      if (clickedObject) {
+        setDetectedObjects([clickedObject]);
+        const ctx = canvasRef.current.getContext('2d');
+        ctx.strokeStyle = 'yellow';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(clickedObject.bbox[0], clickedObject.bbox[1], clickedObject.bbox[2], clickedObject.bbox[3]);
+      } else {
+        alert('No object detected at this position. Try clicking a distinct object.');
+      }
+    } catch (error) {
+      console.error('Detection error:', error);
     }
+  };
+
+  const buttonStyle = {
+    position: 'absolute',
+    width: '60px',
+    height: '60px',
+    borderRadius: '50%',
+    border: '3px solid white',
+    background: 'transparent',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: 'white',
+    fontSize: '12px',
+    textAlign: 'center',
+    pointerEvents: 'auto',
+    zIndex: 10,
   };
 
   return (
@@ -174,7 +223,7 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
         autoPlay
         muted
         playsInline
-        style={{ width: '100%', height: 'auto', display: 'block' }}
+        style={{ width: '100%', height: 'auto', display: 'block', zIndex: 0 }}
       />
       <canvas
         ref={canvasRef}
@@ -186,8 +235,37 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
           width: '100%',
           height: '100%',
           pointerEvents: 'auto',
+          zIndex: 1,
         }}
       />
+      <button
+        onClick={() => {
+          console.log('Reset clicked');
+          onReset();
+        }}
+        style={{
+          ...buttonStyle,
+          bottom: '80px',
+          right: '20px',
+          display: selectedObject ? 'flex' : 'none',
+        }}
+      >
+        Reset
+      </button>
+      <button
+        onClick={() => {
+          console.log('Select object clicked:', selectedObject);
+          onSelectObject(selectedObject);
+        }}
+        style={{
+          ...buttonStyle,
+          bottom: '80px',
+          left: '20px',
+          display: selectedObject ? 'flex' : 'none',
+        }}
+      >
+        {selectedObject ? selectedObject.class : 'None'}
+      </button>
     </div>
   );
 }

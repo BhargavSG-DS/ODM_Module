@@ -1,15 +1,15 @@
 function ObjectSelector({ detectedObjects, setSelectedObject }) {
-    const handleSelect = (obj) => {
-      setSelectedObject(obj);
-    };
-  
+    console.log('ObjectSelector, detectedObjects:', detectedObjects); // Debug
     return (
       <div>
         <h3>Detected Object:</h3>
         {detectedObjects.length > 0 ? (
-          <button onClick={() => handleSelect(detectedObjects[0])}>
-            {detectedObjects[0].class} ({Math.round(detectedObjects[0].bbox[2] / 10)}cm x {Math.round(detectedObjects[0].bbox[3] / 10)}cm)
-          </button>
+          <p onClick={() => {
+            console.log('Setting selectedObject:', detectedObjects[0]);
+            setSelectedObject(detectedObjects[0]);
+          }}>
+            {detectedObjects[0].class} selected. Click here to confirm.
+          </p>
         ) : (
           <p>No object detected. Click on an object in the video feed.</p>
         )}

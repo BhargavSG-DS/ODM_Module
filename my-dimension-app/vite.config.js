@@ -7,5 +7,6 @@ export default defineConfig({
   root: '.', // Ensure Vite looks in the root directory
   server: {
     https: true, // Enable HTTPS
+    host: '0.0.0.0',
   },
 });
