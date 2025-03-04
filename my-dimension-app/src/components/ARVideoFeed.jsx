@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { detectObjects } from '../utils/detectionUtils';
 import { estimateDistance, getDepthFromSize } from '../utils/distanceUtils';
 import { calculateDimensions } from '../utils/dimensionUtils';
+import ObjectMarker from './ObjectMarker';
 
 function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onReset, onSelectObject }) {
   const videoRef = useRef(null);
@@ -19,6 +20,10 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
   const [initialObjectSize, setInitialObjectSize] = useState(null);
   const [cameraError, setCameraError] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [detectedObjects, setDetectedObjectsState] = useState([]);
+  const [showMeasurements, setShowMeasurements] = useState(false);
+  const webglCanvasRef = useRef(null); // Add new ref for WebGL canvas
+  const [videoOrientation, setVideoOrientation] = useState(0);
 
   // Modified getCameras function with better error handling
   const getCameras = async () => {
@@ -41,35 +46,49 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
     }
   };
 
+  // Modified handleResize function
   const handleResize = useCallback(() => {
     if (!containerRef.current || !videoRef.current || !canvasRef.current) return;
 
-    // Clear existing timeout
     if (resizeTimeoutRef.current) {
       clearTimeout(resizeTimeoutRef.current);
     }
 
-    // Debounce resize operation
     resizeTimeoutRef.current = setTimeout(() => {
-      const container = containerRef.current;
-      const containerWidth = container.clientWidth;
-      const videoAspectRatio = videoRef.current.videoWidth / videoRef.current.videoHeight;
-      const containerHeight = containerWidth / videoAspectRatio;
-
-      // Update canvas size
-      canvasRef.current.style.width = `${containerWidth}px`;
-      canvasRef.current.style.height = `${containerHeight}px`;
+      // Set fixed canvas size based on video dimensions
       canvasRef.current.width = videoRef.current.videoWidth;
       canvasRef.current.height = videoRef.current.videoHeight;
 
-      // Update renderer if in 3D mode
+      // Scale the canvas display size while maintaining aspect ratio
+      const containerWidth = containerRef.current.clientWidth;
+      const scale = containerWidth / canvasRef.current.width;
+      canvasRef.current.style.width = `${canvasRef.current.width * scale}px`;
+      canvasRef.current.style.height = `${canvasRef.current.height * scale}px`;
+
       if (rendererRef.current && cameraRef.current) {
-        rendererRef.current.setSize(containerWidth, containerHeight);
-        cameraRef.current.aspect = videoAspectRatio;
+        rendererRef.current.setSize(canvasRef.current.width, canvasRef.current.height);
+        cameraRef.current.aspect = canvasRef.current.width / canvasRef.current.height;
         cameraRef.current.updateProjectionMatrix();
       }
-    }, 250); // 250ms debounce
+
+      // Update WebGL canvas size
+      if (webglCanvasRef.current && rendererRef.current) {
+        webglCanvasRef.current.width = canvasRef.current.width;
+        webglCanvasRef.current.height = canvasRef.current.height;
+        rendererRef.current.setSize(
+          canvasRef.current.width,
+          canvasRef.current.height,
+          false
+        );
+      }
+    }, 250);
   }, []);
+
+  // Helper function to convert canvas coordinates to percentages
+  const getRelativePosition = (x, y) => ({
+    x: (x / canvasRef.current.width) * 100,
+    y: (y / canvasRef.current.height) * 100
+  });
 
   // Modified startVideo function
   const startVideo = async (deviceId = null) => {
@@ -106,6 +125,11 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
           frameRate: settings.frameRate,
           aspectRatio: settings.aspectRatio
         });
+
+        // Get video orientation from track settings
+        if (settings.deviceOrientation) {
+          setVideoOrientation(settings.deviceOrientation || 0);
+        }
 
         // Update canvas size
         if (canvasRef.current) {
@@ -146,24 +170,41 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
 
   const start3DView = async () => {
     setIs3DMode(true);
-    const canvas = canvasRef.current;
-    rendererRef.current = new THREE.WebGLRenderer({ canvas, alpha: true });
-    rendererRef.current.setSize(canvas.width, canvas.height);
+    const canvas = webglCanvasRef.current;
+    
+    try {
+      rendererRef.current = new THREE.WebGLRenderer({ 
+        canvas,
+        alpha: true,
+        antialias: true 
+      });
+      rendererRef.current.setSize(canvasRef.current.width, canvasRef.current.height);
+      rendererRef.current.setClearColor(0x000000, 0);
 
-    sceneRef.current = new THREE.Scene();
-    cameraRef.current = new THREE.PerspectiveCamera(70, canvas.width / canvas.height, 0.01, 20);
-    
-    const light = new THREE.AmbientLight(0xffffff, 1);
-    sceneRef.current.add(light);
-    cameraRef.current.position.z = 2;
-    
-    const animate = () => {
-      requestAnimationFrame(animate);
-      if (rendererRef.current && sceneRef.current && cameraRef.current) {
-        rendererRef.current.render(sceneRef.current, cameraRef.current);
-      }
-    };
-    animate();
+      sceneRef.current = new THREE.Scene();
+      cameraRef.current = new THREE.PerspectiveCamera(
+        70,
+        canvas.width / canvas.height,
+        0.01,
+        20
+      );
+      
+      const light = new THREE.AmbientLight(0xffffff, 1);
+      sceneRef.current.add(light);
+      cameraRef.current.position.z = 2;
+      
+      const animate = () => {
+        if (!is3DMode) return; // Stop animation when 3D mode is disabled
+        requestAnimationFrame(animate);
+        if (rendererRef.current && sceneRef.current && cameraRef.current) {
+          rendererRef.current.render(sceneRef.current, cameraRef.current);
+        }
+      };
+      animate();
+    } catch (error) {
+      console.error('WebGL initialization error:', error);
+      setIs3DMode(false);
+    }
   };
 
   useEffect(() => {
@@ -175,7 +216,25 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
       ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
       ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
 
-      if (selectedObject) {
+      if (!selectedObject) {
+        const objects = await detectObjects(videoRef.current);
+        const highConfidenceObjects = objects.filter(obj => obj.score >= 0.7);
+        
+        // Draw overlay for detected objects
+        highConfidenceObjects.forEach(obj => {
+          ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+          ctx.fillRect(
+            obj.bbox[0],
+            obj.bbox[1],
+            obj.bbox[2],
+            obj.bbox[3]
+          );
+        });
+        
+        setDetectedObjectsState(highConfidenceObjects);
+      }
+
+      if (selectedObject && showMeasurements) {
         const objects = await detectObjects(videoRef.current);
         console.log('Detected objects:', objects);
 
@@ -279,7 +338,7 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
       cancelAnimationFrame(animationFrameId);
       setInitialObjectSize(null);
     };
-  }, [selectedObject, initialObjectSize]);
+  }, [selectedObject, initialObjectSize, showMeasurements]);
 
   // Add helper function for drawing dimension lines
   const drawDimensionLines = (ctx, bbox, dimensions) => {
@@ -368,6 +427,18 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
     }
   };
 
+  const handleObjectSelect = (object) => {
+    if (object.score >= 0.6) {
+      setSelectedObject(object);
+      setShowMeasurements(true);
+      setDetectedObjectsState([]); // Clear other markers
+      setInitialObjectSize({
+        width: object.bbox[2],
+        distance: object.distance
+      });
+    }
+  };
+
   const buttonStyle = {
     position: 'absolute',
     width: '60px',
@@ -384,6 +455,30 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
     textAlign: 'center',
     pointerEvents: 'auto',
     zIndex: 10,
+  };
+
+  // Update video style to handle orientation
+  const videoStyle = {
+    width: '100%',
+    height: 'auto',
+    display: 'block',
+    objectFit: 'contain',
+    backgroundColor: '#000',
+    transform: `rotate(${videoOrientation}deg)`,
+    transition: 'transform 0.3s ease'
+  };
+
+  // Update canvas style to match video orientation
+  const canvasStyle = {
+    position: 'absolute',
+    top: '0',
+    left: '0',
+    width: '100%',
+    height: '100%',
+    pointerEvents: 'auto',
+    zIndex: 1,
+    transform: `rotate(${videoOrientation}deg)`,
+    transition: 'transform 0.3s ease'
   };
 
   return (
@@ -415,13 +510,7 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
         autoPlay
         playsInline
         muted
-        style={{ 
-          width: '100%',
-          height: 'auto',
-          display: 'block',
-          objectFit: 'contain',
-          backgroundColor: '#000'
-        }}
+        style={videoStyle}
         onLoadedMetadata={() => {
           console.log('Video metadata loaded');
           handleResize();
@@ -434,14 +523,20 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
       <canvas
         ref={canvasRef}
         onClick={handleCanvasClick}
+        style={canvasStyle}
+      />
+      {/* Add separate WebGL canvas */}
+      <canvas
+        ref={webglCanvasRef}
         style={{
           position: 'absolute',
-          top: '0',
-          left: '0',
+          top: 0,
+          left: 0,
           width: '100%',
           height: '100%',
-          pointerEvents: 'auto',
-          zIndex: 1,
+          pointerEvents: 'none',
+          zIndex: 2,
+          display: is3DMode ? 'block' : 'none'
         }}
       />
       <button
@@ -510,17 +605,60 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
           >
             Reset
           </button>
+        </>
+      )}
+
+      {/* Updated object markers */}
+      {!selectedObject && detectedObjects.map((obj, index) => {
+        const center = getRelativePosition(
+          obj.bbox[0] + obj.bbox[2] / 2,
+          obj.bbox[1] + obj.bbox[3] / 2
+        );
+        
+        return (
+          <ObjectMarker
+            key={`${obj.class}-${index}`}
+            object={obj}
+            onClick={handleObjectSelect}
+            onSelect={handleObjectSelect}
+            position={center}
+            canvasWidth={canvasRef.current?.width}
+            canvasHeight={canvasRef.current?.height}
+          />
+        );
+      })}
+
+      {/* Modified control buttons */}
+      {selectedObject && showMeasurements && (
+        <div style={{
+          position: 'absolute',
+          top: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          padding: '10px',
+          borderRadius: '8px',
+          color: 'white',
+          zIndex: 20
+        }}>
           <button
-            onClick={() => onSelectObject(selectedObject)}
+            onClick={() => {
+              setShowMeasurements(false);
+              setSelectedObject(null);
+              setInitialObjectSize(null);
+            }}
             style={{
-              ...buttonStyle,
-              bottom: '20px',
-              left: '20px',
+              backgroundColor: '#ff4444',
+              color: 'white',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: '4px',
+              cursor: 'pointer'
             }}
           >
-            {selectedObject.class}
+            Stop Measuring
           </button>
-        </>
+        </div>
       )}
     </div>
   );
