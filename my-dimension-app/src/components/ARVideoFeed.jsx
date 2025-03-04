@@ -1,88 +1,169 @@
-import { useRef, useEffect, useState } from 'react';
+import { useRef, useEffect, useState, useCallback } from 'react';
 import * as THREE from 'three';
-import { detectObjects } from '../utils/tfUtils';
+import { detectObjects } from '../utils/detectionUtils';
+import { estimateDistance, getDepthFromSize } from '../utils/distanceUtils';
+import { calculateDimensions } from '../utils/dimensionUtils';
 
-function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObject, onCanvasClick, onReset, onSelectObject }) {
+function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onReset, onSelectObject }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const rendererRef = useRef(null);
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
-  const referenceSpaceRef = useRef(null);
-  const [arSupported, setARSupported] = useState(null); // Track AR support
-  const [arError, setARError] = useState(null); // Track AR errors
+  const [cameras, setCameras] = useState([]);
+  const [selectedCamera, setSelectedCamera] = useState(null);
+  const [deviceInfo, setDeviceInfo] = useState(null);
+  const [is3DMode, setIs3DMode] = useState(false);
+  const containerRef = useRef(null);
+  const resizeTimeoutRef = useRef(null);
+  const [initialObjectSize, setInitialObjectSize] = useState(null);
+  const [cameraError, setCameraError] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Modified getCameras function with better error handling
+  const getCameras = async () => {
+    try {
+      await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission first
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      console.log('Available cameras:', videoDevices);
+      
+      setCameras(videoDevices);
+      if (videoDevices.length > 0 && !selectedCamera) {
+        setSelectedCamera(videoDevices[0].deviceId);
+      }
+      setCameraError(null);
+    } catch (error) {
+      console.error('Camera access error:', error);
+      setCameraError('Camera access denied or not available');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResize = useCallback(() => {
+    if (!containerRef.current || !videoRef.current || !canvasRef.current) return;
+
+    // Clear existing timeout
+    if (resizeTimeoutRef.current) {
+      clearTimeout(resizeTimeoutRef.current);
+    }
+
+    // Debounce resize operation
+    resizeTimeoutRef.current = setTimeout(() => {
+      const container = containerRef.current;
+      const containerWidth = container.clientWidth;
+      const videoAspectRatio = videoRef.current.videoWidth / videoRef.current.videoHeight;
+      const containerHeight = containerWidth / videoAspectRatio;
+
+      // Update canvas size
+      canvasRef.current.style.width = `${containerWidth}px`;
+      canvasRef.current.style.height = `${containerHeight}px`;
+      canvasRef.current.width = videoRef.current.videoWidth;
+      canvasRef.current.height = videoRef.current.videoHeight;
+
+      // Update renderer if in 3D mode
+      if (rendererRef.current && cameraRef.current) {
+        rendererRef.current.setSize(containerWidth, containerHeight);
+        cameraRef.current.aspect = videoAspectRatio;
+        cameraRef.current.updateProjectionMatrix();
+      }
+    }, 250); // 250ms debounce
+  }, []);
+
+  // Modified startVideo function
+  const startVideo = async (deviceId = null) => {
+    try {
+      setIsLoading(true);
+      const constraints = {
+        video: {
+          deviceId: deviceId ? { exact: deviceId } : undefined,
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'environment'
+        }
+      };
+
+      console.log('Requesting camera with constraints:', constraints);
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        console.log('Stream attached to video element');
+        
+        // Force video element to update
+        videoRef.current.load();
+        await videoRef.current.play();
+        
+        const track = stream.getVideoTracks()[0];
+        const settings = track.getSettings();
+        console.log('Camera settings:', settings);
+        
+        setDeviceInfo({
+          name: track.label,
+          width: settings.width,
+          height: settings.height,
+          frameRate: settings.frameRate,
+          aspectRatio: settings.aspectRatio
+        });
+
+        // Update canvas size
+        if (canvasRef.current) {
+          canvasRef.current.width = settings.width;
+          canvasRef.current.height = settings.height;
+          handleResize();
+        }
+      }
+      setCameraError(null);
+    } catch (error) {
+      console.error('Camera start error:', error);
+      setCameraError(`Failed to start camera: ${error.message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   useEffect(() => {
     console.log('ARVideoFeed mounted, selectedObject:', selectedObject);
-    const startVideo = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-        });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play().catch((err) => {
-            console.error('Video play failed:', err);
-            alert('Tap the screen to start the video feed.');
-          });
-          videoRef.current.addEventListener('loadedmetadata', () => {
-            const canvas = canvasRef.current;
-            canvas.width = videoRef.current.videoWidth;
-            canvas.height = videoRef.current.videoHeight;
-          });
-        }
-      } catch (error) {
-        console.error('Camera access failed:', error);
-        alert('Failed to access camera. Ensure permissions and HTTPS.');
-      }
+    getCameras();
+    navigator.mediaDevices.addEventListener('devicechange', getCameras);
+    return () => {
+      navigator.mediaDevices.removeEventListener('devicechange', getCameras);
     };
-    startVideo();
-
-    // Check AR support on mount
-    const checkARSupport = async () => {
-      if (!navigator.xr) {
-        console.log('WebXR not supported in this browser.');
-        setARSupported(false);
-        return;
-      }
-      const isSupported = await navigator.xr.isSessionSupported('immersive-ar');
-      console.log('Immersive AR supported:', isSupported);
-      setARSupported(isSupported);
-    };
-    checkARSupport();
   }, []);
 
-  const startAR = async () => {
-    if (!navigator.xr || !arSupported) {
-      console.log('AR not supported or already checked as unsupported.');
-      setARError('AR not supported on this device.');
-      return;
+  // Add effect to handle camera selection
+  useEffect(() => {
+    if (selectedCamera) {
+      // Stop existing stream if any
+      if (videoRef.current && videoRef.current.srcObject) {
+        const tracks = videoRef.current.srcObject.getTracks();
+        tracks.forEach(track => track.stop());
+      }
+      startVideo(selectedCamera);
     }
+  }, [selectedCamera]);
 
-    try {
-      const session = await navigator.xr.requestSession('immersive-ar', {
-        requiredFeatures: ['hit-test', 'local-floor'],
-        optionalFeatures: ['dom-overlay'],
-      });
-      console.log('AR session started:', session);
-      setARSession(session);
-      setARError(null);
+  const start3DView = async () => {
+    setIs3DMode(true);
+    const canvas = canvasRef.current;
+    rendererRef.current = new THREE.WebGLRenderer({ canvas, alpha: true });
+    rendererRef.current.setSize(canvas.width, canvas.height);
 
-      const canvas = canvasRef.current;
-      rendererRef.current = new THREE.WebGLRenderer({ canvas, alpha: true });
-      rendererRef.current.setSize(canvas.width, canvas.height);
-
-      sceneRef.current = new THREE.Scene();
-      cameraRef.current = new THREE.PerspectiveCamera(70, canvas.width / canvas.height, 0.01, 20);
-
-      session.updateRenderState({ baseLayer: new XRWebGLLayer(session, rendererRef.current) });
-
-      referenceSpaceRef.current = await session.requestReferenceSpace('local-floor');
-      console.log('Reference space set:', referenceSpaceRef.current);
-    } catch (error) {
-      console.error('Failed to start AR session:', error);
-      setARError('Failed to start AR: ' + error.message);
-    }
+    sceneRef.current = new THREE.Scene();
+    cameraRef.current = new THREE.PerspectiveCamera(70, canvas.width / canvas.height, 0.01, 20);
+    
+    const light = new THREE.AmbientLight(0xffffff, 1);
+    sceneRef.current.add(light);
+    cameraRef.current.position.z = 2;
+    
+    const animate = () => {
+      requestAnimationFrame(animate);
+      if (rendererRef.current && sceneRef.current && cameraRef.current) {
+        rendererRef.current.render(sceneRef.current, cameraRef.current);
+      }
+    };
+    animate();
   };
 
   useEffect(() => {
@@ -96,11 +177,15 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
 
       if (selectedObject) {
         const objects = await detectObjects(videoRef.current);
+        console.log('Detected objects:', objects);
+
         const trackedObject = objects.find(obj =>
           obj.class === selectedObject.class &&
           Math.abs(obj.bbox[0] - selectedObject.bbox[0]) < 50 &&
           Math.abs(obj.bbox[1] - selectedObject.bbox[1]) < 50
         ) || selectedObject;
+
+        console.log('Tracked object:', trackedObject);
 
         const obj = trackedObject;
         const clampedBbox = {
@@ -110,6 +195,33 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
           height: Math.min(obj.bbox[3], canvasRef.current.height - obj.bbox[1]),
         };
 
+        // Calculate distance with better error handling
+        let distance = null;
+        try {
+          distance = estimateDistance(
+            obj.class,
+            clampedBbox.width,
+            canvasRef.current.width
+          );
+          console.log('Estimated distance:', distance);
+        } catch (error) {
+          console.error('Distance estimation error:', error);
+        }
+
+        // Track object size changes for relative depth
+        if (!initialObjectSize && distance) {
+          setInitialObjectSize({
+            width: clampedBbox.width,
+            distance: distance
+          });
+        }
+
+        // Get relative depth if we have initial size
+        const relativeDepth = initialObjectSize
+          ? getDepthFromSize(initialObjectSize.width, clampedBbox.width, initialObjectSize.distance)
+          : null;
+
+        // Draw bounding box and measurements
         ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
         ctx.fillRect(clampedBbox.x, clampedBbox.y, clampedBbox.width, clampedBbox.height);
 
@@ -117,60 +229,45 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
         ctx.lineWidth = 2;
         ctx.strokeRect(clampedBbox.x, clampedBbox.y, clampedBbox.width, clampedBbox.height);
 
-        const distanceCm = obj.distanceCm || 100;
-        const fovHorizontalDeg = 60;
-        const fovVerticalDeg = fovHorizontalDeg * (canvasRef.current.height / canvasRef.current.width);
-        const widthRealCm = 2 * distanceCm * Math.tan((fovHorizontalDeg * Math.PI / 180) / 2);
-        const pixelToCmRatio = widthRealCm / canvasRef.current.width;
-        const widthCm = Math.round(clampedBbox.width * pixelToCmRatio);
-        const heightCm = Math.round(clampedBbox.height * pixelToCmRatio);
-
+        // Draw distance information
         ctx.fillStyle = 'green';
         ctx.font = '16px Arial';
-        const widthText = `${widthCm} cm`;
-        const heightText = `${heightCm} cm`;
-        ctx.fillText(widthText, clampedBbox.x + clampedBbox.width / 2 - ctx.measureText(widthText).width / 2, clampedBbox.y - 10);
-        ctx.save();
-        ctx.rotate(-Math.PI / 2);
-        ctx.fillText(heightText, -clampedBbox.y - clampedBbox.height / 2 - 20, clampedBbox.x - 10);
-        ctx.restore();
+        const distanceText = distance ? `Distance: ${distance} cm` : 'Calculating...';
+        ctx.fillText(distanceText, clampedBbox.x, clampedBbox.y - 40);
+        
+        // Add object class and confidence
+        ctx.fillText(`${obj.class} (${Math.round(obj.score * 100)}%)`, 
+          clampedBbox.x, clampedBbox.y - 60);
 
-        console.log('Tracked object:', obj.class, 'BBox:', obj.bbox, 'Distance:', distanceCm, 'Cm:', widthCm, heightCm);
+        console.log('Tracked object:', obj.class, 'BBox:', obj.bbox, 'Distance:', distance, 'Relative Depth:', relativeDepth);
 
-        if (arSession && referenceSpaceRef.current) {
-          arSession.requestAnimationFrame((time, frame) => {
-            console.log('AR frame:', frame);
-            const pose = frame.getViewerPose(referenceSpaceRef.current);
-            if (pose) {
-              console.log('Viewer pose:', pose);
-              const hitTestSource = arSession.requestHitTestSource({ space: referenceSpaceRef.current });
-              frame.getHitTestResults(hitTestSource).then((hitResults) => {
-                console.log('Hit test results:', hitResults);
-                if (hitResults.length > 0) {
-                  const hitPose = hitResults[0].getPose(referenceSpaceRef.current);
-                  const position = hitPose.transform.position;
-                  console.log('Hit position:', position.x, position.y, position.z);
+        // Calculate dimensions when we have a valid distance
+        if (distance) {
+          const dimensions = calculateDimensions(
+            clampedBbox,
+            distance,
+            canvasRef.current.width,
+            canvasRef.current.height
+          );
 
-                  if (!sceneRef.current.children.length) {
-                    const geometry = new THREE.BoxGeometry(0.1, 0.1, 0.1);
-                    const material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-                    const cube = new THREE.Mesh(geometry, material);
-                    sceneRef.current.add(cube);
-                    console.log('Cube added to scene');
-                  }
+          // Draw dimensions
+          ctx.fillStyle = 'green';
+          ctx.font = '16px Arial';
+          
+          // Draw base measurements
+          ctx.fillText(`Width: ${dimensions.width}cm`, clampedBbox.x + 140, clampedBbox.y - 60);
+          ctx.fillText(`Height: ${dimensions.height}cm`, clampedBbox.x + 140, clampedBbox.y - 40);
+          // ctx.fillText(`Depth: ${dimensions.depth}cm`, clampedBbox.x + 140, clampedBbox.y - 20);
+          
+          // Draw confidence indicator
+          ctx.fillStyle = dimensions.confidence > 80 ? 'green' : 'orange';
+          ctx.fillText(`Confidence: ${dimensions.confidence}%`, 
+            clampedBbox.x + clampedBbox.width - 140, 
+            clampedBbox.y - 20
+          );
 
-                  const mesh = sceneRef.current.children[0];
-                  mesh.position.set(position.x, position.y, position.z);
-                  rendererRef.current.render(sceneRef.current, cameraRef.current);
-                  console.log('Rendered AR scene');
-                } else {
-                  console.log('No hit results');
-                }
-              }).catch(err => console.error('Hit test error:', err));
-            } else {
-              console.log('No viewer pose');
-            }
-          });
+          // Draw dimension lines
+          drawDimensionLines(ctx, clampedBbox, dimensions);
         }
       }
 
@@ -178,8 +275,59 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
     };
     animationFrameId = requestAnimationFrame(renderLoop);
 
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [arSession, selectedObject]);
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      setInitialObjectSize(null);
+    };
+  }, [selectedObject, initialObjectSize]);
+
+  // Add helper function for drawing dimension lines
+  const drawDimensionLines = (ctx, bbox, dimensions) => {
+    ctx.save();
+    ctx.strokeStyle = 'green';
+    ctx.lineWidth = 2;
+    
+    // Width line
+    ctx.beginPath();
+    ctx.moveTo(bbox.x, bbox.y + bbox.height);
+    ctx.lineTo(bbox.x + bbox.width, bbox.y + bbox.height);
+    ctx.stroke();
+    
+    // Height line
+    ctx.beginPath();
+    ctx.moveTo(bbox.x, bbox.y);
+    ctx.lineTo(bbox.x, bbox.y + bbox.height);
+    ctx.stroke();
+    
+    // Depth indicators (diagonal lines at corners)
+    const depthSize = 20;
+    ctx.setLineDash([5, 5]);
+    
+    // Top-right corner
+    ctx.beginPath();
+    ctx.moveTo(bbox.x + bbox.width, bbox.y);
+    ctx.lineTo(bbox.x + bbox.width + depthSize, bbox.y - depthSize);
+    ctx.stroke();
+    
+    // Bottom-right corner
+    ctx.beginPath();
+    ctx.moveTo(bbox.x + bbox.width, bbox.y + bbox.height);
+    ctx.lineTo(bbox.x + bbox.width + depthSize, bbox.y + bbox.height - depthSize);
+    ctx.stroke();
+    
+    ctx.setLineDash([]);
+    ctx.restore();
+  };
+
+  useEffect(() => {
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+      }
+    };
+  }, [handleResize]);
 
   const handleCanvasClick = async (e) => {
     if (videoRef.current && videoRef.current.paused) {
@@ -239,72 +387,141 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
   };
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: 'auto' }}>
+    <div 
+      ref={containerRef}
+      style={{ 
+        position: 'relative',
+        width: '100%',
+        height: 'auto',
+        maxWidth: '100vw',
+        margin: '0 auto',
+        overflow: 'hidden'
+      }}
+    >
+      {isLoading && (
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', color: 'white', background: 'rgba(0,0,0,0.7)', padding: '20px', borderRadius: '10px', zIndex: 20 }}>
+          Loading camera...
+        </div>
+      )}
+      
+      {cameraError && (
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', color: 'red', background: 'rgba(0,0,0,0.7)', padding: '20px', borderRadius: '10px', zIndex: 20 }}>
+          {cameraError}
+        </div>
+      )}
+
       <video
         ref={videoRef}
         autoPlay
-        muted
         playsInline
-        style={{ width: '100%', height: 'auto', display: 'block', zIndex: 0 }}
+        muted
+        style={{ 
+          width: '100%',
+          height: 'auto',
+          display: 'block',
+          objectFit: 'contain',
+          backgroundColor: '#000'
+        }}
+        onLoadedMetadata={() => {
+          console.log('Video metadata loaded');
+          handleResize();
+        }}
+        onError={(e) => {
+          console.error('Video error:', e);
+          setCameraError('Video failed to load');
+        }}
       />
       <canvas
         ref={canvasRef}
         onClick={handleCanvasClick}
         style={{
           position: 'absolute',
-          top: 0,
-          left: 0,
+          top: '0',
+          left: '0',
           width: '100%',
           height: '100%',
           pointerEvents: 'auto',
           zIndex: 1,
         }}
       />
-      {arSupported === null && <p>Loading AR support check...</p>}
-      {arSupported === false && <p>AR not supported on this device.</p>}
-      {arSupported && !arSession && !arError && (
-        <button
-          onClick={startAR}
-          style={{
-            ...buttonStyle,
-            top: '20px',
-            left: '50%',
-            transform: 'translateX(-50%)',
-            fontSize: '16px',
-          }}
-        >
-          Start AR
-        </button>
-      )}
-      {arError && <p style={{ color: 'red', zIndex: 10 }}>{arError}</p>}
       <button
-        onClick={() => {
-          console.log('Reset clicked');
-          onReset();
-        }}
+        onClick={start3DView}
         style={{
           ...buttonStyle,
-          bottom: '20px',
+          top: '20px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          fontSize: '16px',
+          display: !is3DMode ? 'flex' : 'none'
+        }}
+      >
+        Start 3D View
+      </button>
+      <select
+        value={selectedCamera || ''}
+        onChange={(e) => setSelectedCamera(e.target.value)}
+        style={{
+          position: 'absolute',
+          top: '20px',
           right: '20px',
-          display: selectedObject ? 'flex' : 'none',
+          zIndex: 10,
+          padding: '5px',
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          color: 'white',
+          border: '1px solid white',
+          borderRadius: '4px'
         }}
       >
-        Reset
-      </button>
-      <button
-        onClick={() => {
-          console.log('Select object clicked:', selectedObject);
-          onSelectObject(selectedObject);
-        }}
-        style={{
-          ...buttonStyle,
+        {cameras.map(camera => (
+          <option key={camera.deviceId} value={camera.deviceId}>
+            {camera.label || `Camera ${cameras.indexOf(camera) + 1}`}
+          </option>
+        ))}
+      </select>
+
+      {deviceInfo && (
+        <div style={{
+          position: 'absolute',
           bottom: '20px',
-          left: '20px',
-          display: selectedObject ? 'flex' : 'none',
-        }}
-      >
-        {selectedObject ? selectedObject.class : 'None'}
-      </button>
+          left: '50%',
+          transform: 'translateX(-50%)',
+          backgroundColor: 'rgba(0, 0, 0, 0.7)',
+          color: 'white',
+          padding: '8px',
+          borderRadius: '4px',
+          fontSize: '12px',
+          zIndex: 10,
+          maxWidth: '90%',  // Prevent overflow on small screens
+          wordBreak: 'break-word'  // Handle long device names
+        }}>
+          {deviceInfo.name} | {deviceInfo.width}x{deviceInfo.height} | 
+          {deviceInfo.frameRate}fps | Ratio: {deviceInfo.aspectRatio?.toFixed(2)}
+        </div>
+      )}
+      {selectedObject && (
+        <>
+          <button
+            onClick={onReset}
+            style={{
+              ...buttonStyle,
+              bottom: '20px',
+              right: '20px',
+            }}
+          >
+            Reset
+          </button>
+          <button
+            onClick={() => onSelectObject(selectedObject)}
+            style={{
+              ...buttonStyle,
+              bottom: '20px',
+              left: '20px',
+            }}
+          >
+            {selectedObject.class}
+          </button>
+        </>
+      )}
     </div>
   );
 }

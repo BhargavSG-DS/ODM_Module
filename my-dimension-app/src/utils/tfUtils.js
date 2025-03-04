@@ -1,38 +1,82 @@
 import * as tf from '@tensorflow/tfjs';
-import * as cocoSsd from '@tensorflow-models/coco-ssd';
-import * as bodyPix from '@tensorflow-models/body-pix';
 
-let cocoModel, bodyPixModel;
+let loadedModel;
+
+// YOLOv8 preprocessing
+function preprocessImage(imageData, modelWidth = 640, modelHeight = 640) {
+  const tensor = tf.browser.fromPixels(imageData);
+  const resized = tf.image.resizeBilinear(tensor, [modelWidth, modelHeight]);
+  const normalized = tf.div(resized, 255.0);
+  const batched = tf.expandDims(normalized, 0);
+  tensor.dispose();
+  resized.dispose();
+  return batched;
+}
+
+// YOLOv8 postprocessing
+function processPredictions(prediction, originalWidth, originalHeight, modelWidth = 640, modelHeight = 640) {
+  const [batchOutput] = prediction;
+  const [boxes, scores, classes] = tf.split(batchOutput, [4, 1, -1], -1);
+  
+  const boxesData = boxes.dataSync();
+  const scoresData = scores.dataSync();
+  const classesData = classes.dataSync();
+  
+  const detections = [];
+  const numBoxes = boxesData.length / 4;
+  
+  for (let i = 0; i < numBoxes; i++) {
+    const score = scoresData[i];
+    if (score > 0.5) { // Confidence threshold
+      const bbox = [
+        boxesData[i * 4],     // x
+        boxesData[i * 4 + 1], // y
+        boxesData[i * 4 + 2], // width
+        boxesData[i * 4 + 3]  // height
+      ];
+
+      // Convert normalized coordinates to pixel coordinates
+      const x = bbox[0] * originalWidth;
+      const y = bbox[1] * originalHeight;
+      const width = bbox[2] * originalWidth;
+      const height = bbox[3] * originalHeight;
+
+      detections.push({
+        bbox: [x, y, width, height],
+        class: classesData[i].toString(),
+        score: score
+      });
+    }
+  }
+
+  return detections;
+}
 
 export async function detectObjects(video) {
-  await tf.ready();
-
-  if (!cocoModel) {
-    cocoModel = await cocoSsd.load();
+  if (!loadedModel) {
+    loadedModel = await tf.loadGraphModel(
+      `${window.location.origin}/yolov8n_web_model/model.json`
+    );
+    // Warmup the model
+    const dummyInput = tf.zeros([1, 640, 640, 3]);
+    await loadedModel.executeAsync(dummyInput);
+    dummyInput.dispose();
   }
-  if (!bodyPixModel) {
-    bodyPixModel = await bodyPix.load();
-  }
 
-  // Detect objects with COCO-SSD
-  const predictions = await cocoModel.detect(video);
+  return tf.tidy(() => {
+    // Preprocess
+    const input = preprocessImage(video);
+    
+    // Run inference
+    const prediction = loadedModel.predict(input);
+    
+    // Postprocess
+    const detections = processPredictions(
+      prediction,
+      video.videoWidth,
+      video.videoHeight
+    );
 
-  // Enhance with segmentation if a glass-like object is detected
-  const enhancedPredictions = await Promise.all(predictions.map(async (pred) => {
-    if (pred.class === 'cup' || pred.class === 'bottle') { // Closest match to "glass"
-      const segmentation = await bodyPixModel.segmentPersonParts(video, {
-        flipHorizontal: false,
-        internalResolution: 'medium',
-        segmentationThreshold: 0.7,
-      });
-      // Simplified: Use bounding box for now, segmentation data available for future use
-      return { ...pred, segmentation };
-    }
-    return pred;
-  }));
-
-  return enhancedPredictions.map(pred => ({
-    ...pred,
-    bbox: [pred.bbox[0], pred.bbox[1], pred.bbox[2], pred.bbox[3]], // Keep original pixel values
-  }));
+    return detections;
+  });
 }
