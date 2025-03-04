@@ -1,6 +1,8 @@
 import { FilesetResolver, ObjectDetector } from "@mediapipe/tasks-vision";
 
 let detector = null;
+let lastDetectionTime = 0;
+const DETECTION_INTERVAL = 200; // Limit to 5 detections per second
 
 async function initializeDetector() {
   if (!detector) {
@@ -30,30 +32,37 @@ async function initializeDetector() {
 
 export async function detectObjects(videoElement) {
   try {
+    const now = Date.now();
+    if (now - lastDetectionTime < DETECTION_INTERVAL) {
+      return null; // Skip detection if too soon
+    }
+
     if (!videoElement || videoElement.readyState !== 4) {
-      console.log('Video not ready for detection');
       return [];
     }
 
-    // Create a temporary canvas to extract the current video frame
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = videoElement.videoWidth;
-    tempCanvas.height = videoElement.videoHeight;
-    const ctx = tempCanvas.getContext('2d');
-    ctx.drawImage(videoElement, 0, 0);
-
+    lastDetectionTime = now;
     const detector = await initializeDetector();
-    // Detect on the current frame
+
+    // Create a temporary canvas with reduced size
+    const tempCanvas = document.createElement('canvas');
+    const scale = 0.5; // Reduce resolution by half
+    tempCanvas.width = videoElement.videoWidth * scale;
+    tempCanvas.height = videoElement.videoHeight * scale;
+    const ctx = tempCanvas.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(videoElement, 0, 0, tempCanvas.width, tempCanvas.height);
+
     const detections = await detector.detect(tempCanvas);
     
+    // Scale back the detection coordinates
     return detections.detections.map(detection => ({
       class: detection.categories[0].categoryName,
       score: detection.categories[0].score,
       bbox: [
-        detection.boundingBox.originX,
-        detection.boundingBox.originY,
-        detection.boundingBox.width,
-        detection.boundingBox.height
+        detection.boundingBox.originX / scale,
+        detection.boundingBox.originY / scale,
+        detection.boundingBox.width / scale,
+        detection.boundingBox.height / scale
       ]
     }));
   } catch (error) {

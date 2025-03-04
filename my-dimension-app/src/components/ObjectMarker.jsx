@@ -5,10 +5,12 @@ import { calculateDimensions } from '../utils/dimensionUtils';
 const ObjectMarker = ({ object, onSelect, position, canvasWidth, canvasHeight }) => {
   const [isHovered, setIsHovered] = useState(false);
   const [dimensions, setDimensions] = useState(null);
+  const [stateDistance, setDistance] = useState(null);
 
   useEffect(() => {
     if (isHovered) {
       const distance = estimateDistance(object.class, object.bbox[2], canvasWidth);
+      setDistance(distance);
       if (distance) {
         const dims = calculateDimensions(
           {
@@ -25,7 +27,7 @@ const ObjectMarker = ({ object, onSelect, position, canvasWidth, canvasHeight })
   }, [isHovered, object, canvasWidth, canvasHeight]);
 
   const handleClick = () => {
-    if (object.score >= 0.7) {
+    if (object.score >= 0.6) {
       onSelect(object);
     }
   };
@@ -36,10 +38,10 @@ const ObjectMarker = ({ object, onSelect, position, canvasWidth, canvasHeight })
     top: `${position.y}%`,
     width: '12px',
     height: '12px',
-    backgroundColor: object.score >= 0.7 ? (isHovered ? '#00ff00' : '#ffffff') : '#ff6666',
-    border: `2px solid ${object.score >= 0.7 ? '#00ff00' : '#ff6666'}`,
+    backgroundColor: object.score >= 0.6 ? (isHovered ? '#00ff00' : '#ffffff') : '#ff6666',
+    border: `2px solid ${object.score >= 0.6 ? '#00ff00' : '#ff6666'}`,
     borderRadius: '50%',
-    cursor: object.score >= 0.7 ? 'pointer' : 'not-allowed',
+    cursor: object.score >= 0.6 ? 'pointer' : 'not-allowed',
     transform: 'translate(-50%, -50%)',
     zIndex: 15,
     transition: 'all 0.2s ease'
@@ -74,17 +76,13 @@ const ObjectMarker = ({ object, onSelect, position, canvasWidth, canvasHeight })
         <div>Confidence: {Math.round(object.score * 100)}%</div>
         {dimensions && (
           <>
+
             <div>Width: {dimensions.width}cm</div>
             <div>Height: {dimensions.height}cm</div>
-            <div>Depth: {dimensions.depth}cm</div>
-            {object.score >= 0.7 && (
-              <div style={{ marginTop: '4px', color: '#00ff00' }}>
-                Click to measure
-              </div>
-            )}
+            <div>Distance: {stateDistance}cm</div>
           </>
         )}
-        {object.score < 0.7 && (
+        {object.score < 0.6 && (
           <div style={{ color: '#ff6666', marginTop: '4px' }}>
             Low confidence
           </div>

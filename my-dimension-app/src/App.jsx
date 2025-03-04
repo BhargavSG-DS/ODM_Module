@@ -26,12 +26,12 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-      <div style={{ padding: '10px', background: '#f0f0f0' }}>
+      {/* <div style={{ padding: '10px', background: '#f0f0f0' }}>
         <ObjectSelector
           detectedObjects={detectedObjects}
           setSelectedObject={setSelectedObject}
         />
-      </div>
+      </div> */}
       <div style={{ flex: '1', position: 'relative' }}>
         <ARVideoFeed
           arSession={arSession}

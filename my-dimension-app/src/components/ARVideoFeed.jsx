@@ -24,6 +24,8 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
   const [showMeasurements, setShowMeasurements] = useState(false);
   const webglCanvasRef = useRef(null); // Add new ref for WebGL canvas
   const [videoOrientation, setVideoOrientation] = useState(0);
+  const lastRenderTime = useRef(0);
+  const RENDER_INTERVAL = 1000 / 30; // Target 30 FPS
 
   // Modified getCameras function with better error handling
   const getCameras = async () => {
@@ -212,122 +214,119 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
 
     let animationFrameId;
     const renderLoop = async () => {
-      const ctx = canvasRef.current.getContext('2d');
-      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-      ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
+      const now = Date.now();
+      const elapsed = now - lastRenderTime.current;
 
-      if (!selectedObject) {
-        const objects = await detectObjects(videoRef.current);
-        const highConfidenceObjects = objects.filter(obj => obj.score >= 0.7);
-        
-        // Draw overlay for detected objects
-        highConfidenceObjects.forEach(obj => {
-          ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
-          ctx.fillRect(
-            obj.bbox[0],
-            obj.bbox[1],
-            obj.bbox[2],
-            obj.bbox[3]
-          );
-        });
-        
-        setDetectedObjectsState(highConfidenceObjects);
-      }
+      if (elapsed > RENDER_INTERVAL) {
+        const ctx = canvasRef.current.getContext('2d');
+        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+        ctx.drawImage(videoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
 
-      if (selectedObject && showMeasurements) {
-        const objects = await detectObjects(videoRef.current);
-        console.log('Detected objects:', objects);
-
-        const trackedObject = objects.find(obj =>
-          obj.class === selectedObject.class &&
-          Math.abs(obj.bbox[0] - selectedObject.bbox[0]) < 50 &&
-          Math.abs(obj.bbox[1] - selectedObject.bbox[1]) < 50
-        ) || selectedObject;
-
-        console.log('Tracked object:', trackedObject);
-
-        const obj = trackedObject;
-        const clampedBbox = {
-          x: Math.max(0, Math.min(obj.bbox[0], canvasRef.current.width)),
-          y: Math.max(0, Math.min(obj.bbox[1], canvasRef.current.height)),
-          width: Math.min(obj.bbox[2], canvasRef.current.width - obj.bbox[0]),
-          height: Math.min(obj.bbox[3], canvasRef.current.height - obj.bbox[1]),
-        };
-
-        // Calculate distance with better error handling
-        let distance = null;
-        try {
-          distance = estimateDistance(
-            obj.class,
-            clampedBbox.width,
-            canvasRef.current.width
-          );
-          console.log('Estimated distance:', distance);
-        } catch (error) {
-          console.error('Distance estimation error:', error);
+        if (!selectedObject) {
+          const objects = await detectObjects(videoRef.current);
+          if (objects) { // Only update if we got new detections
+            const highConfidenceObjects = objects.filter(obj => obj.score >= 0.7);
+            setDetectedObjectsState(highConfidenceObjects);
+          }
         }
 
-        // Track object size changes for relative depth
-        if (!initialObjectSize && distance) {
-          setInitialObjectSize({
-            width: clampedBbox.width,
-            distance: distance
-          });
-        }
+        if (selectedObject && showMeasurements) {
+          const objects = await detectObjects(videoRef.current);
+          console.log('Detected objects:', objects);
 
-        // Get relative depth if we have initial size
-        const relativeDepth = initialObjectSize
-          ? getDepthFromSize(initialObjectSize.width, clampedBbox.width, initialObjectSize.distance)
-          : null;
+          const trackedObject = objects.find(obj =>
+            obj.class === selectedObject.class &&
+            Math.abs(obj.bbox[0] - selectedObject.bbox[0]) < 50 &&
+            Math.abs(obj.bbox[1] - selectedObject.bbox[1]) < 50
+          ) || selectedObject;
 
-        // Draw bounding box and measurements
-        ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
-        ctx.fillRect(clampedBbox.x, clampedBbox.y, clampedBbox.width, clampedBbox.height);
+          console.log('Tracked object:', trackedObject);
 
-        ctx.strokeStyle = 'green';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(clampedBbox.x, clampedBbox.y, clampedBbox.width, clampedBbox.height);
+          const obj = trackedObject;
+          const clampedBbox = {
+            x: Math.max(0, Math.min(obj.bbox[0], canvasRef.current.width)),
+            y: Math.max(0, Math.min(obj.bbox[1], canvasRef.current.height)),
+            width: Math.min(obj.bbox[2], canvasRef.current.width - obj.bbox[0]),
+            height: Math.min(obj.bbox[3], canvasRef.current.height - obj.bbox[1]),
+          };
 
-        // Draw distance information
-        ctx.fillStyle = 'green';
-        ctx.font = '16px Arial';
-        const distanceText = distance ? `Distance: ${distance} cm` : 'Calculating...';
-        ctx.fillText(distanceText, clampedBbox.x, clampedBbox.y - 40);
-        
-        // Add object class and confidence
-        ctx.fillText(`${obj.class} (${Math.round(obj.score * 100)}%)`, 
-          clampedBbox.x, clampedBbox.y - 60);
+          // Calculate distance with better error handling
+          let distance = null;
+          try {
+            distance = estimateDistance(
+              obj.class,
+              clampedBbox.width,
+              canvasRef.current.width
+            );
+            console.log('Estimated distance:', distance);
+          } catch (error) {
+            console.error('Distance estimation error:', error);
+          }
 
-        console.log('Tracked object:', obj.class, 'BBox:', obj.bbox, 'Distance:', distance, 'Relative Depth:', relativeDepth);
+          // Track object size changes for relative depth
+          if (!initialObjectSize && distance) {
+            setInitialObjectSize({
+              width: clampedBbox.width,
+              distance: distance
+            });
+          }
 
-        // Calculate dimensions when we have a valid distance
-        if (distance) {
-          const dimensions = calculateDimensions(
-            clampedBbox,
-            distance,
-            canvasRef.current.width,
-            canvasRef.current.height
-          );
+          // Get relative depth if we have initial size
+          const relativeDepth = initialObjectSize
+            ? getDepthFromSize(initialObjectSize.width, clampedBbox.width, initialObjectSize.distance)
+            : null;
 
-          // Draw dimensions
+          // Draw bounding box and measurements
+          ctx.fillStyle = 'rgba(0, 255, 0, 0.3)';
+          ctx.fillRect(clampedBbox.x, clampedBbox.y, clampedBbox.width, clampedBbox.height);
+
+          ctx.strokeStyle = 'green';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(clampedBbox.x, clampedBbox.y, clampedBbox.width, clampedBbox.height);
+
+          // Draw distance information
           ctx.fillStyle = 'green';
           ctx.font = '16px Arial';
+          const distanceText = distance ? `Distance: ${distance} cm` : 'Calculating...';
+          ctx.fillText(distanceText, clampedBbox.x, clampedBbox.y - 40);
           
-          // Draw base measurements
-          ctx.fillText(`Width: ${dimensions.width}cm`, clampedBbox.x + 140, clampedBbox.y - 60);
-          ctx.fillText(`Height: ${dimensions.height}cm`, clampedBbox.x + 140, clampedBbox.y - 40);
-          // ctx.fillText(`Depth: ${dimensions.depth}cm`, clampedBbox.x + 140, clampedBbox.y - 20);
-          
-          // Draw confidence indicator
-          ctx.fillStyle = dimensions.confidence > 80 ? 'green' : 'orange';
-          ctx.fillText(`Confidence: ${dimensions.confidence}%`, 
-            clampedBbox.x + clampedBbox.width - 140, 
-            clampedBbox.y - 20
-          );
+          // Add object class and confidence
+          ctx.fillText(`${obj.class} (${Math.round(obj.score * 100)}%)`, 
+            clampedBbox.x, clampedBbox.y - 60);
 
-          // Draw dimension lines
-          drawDimensionLines(ctx, clampedBbox, dimensions);
+          console.log('Tracked object:', obj.class, 'BBox:', obj.bbox, 'Distance:', distance, 'Relative Depth:', relativeDepth);
+
+          // Calculate dimensions when we have a valid distance
+          if (distance) {
+            const dimensions = calculateDimensions(
+              clampedBbox,
+              distance,
+              canvasRef.current.width,
+              canvasRef.current.height
+            );
+
+            // Draw dimensions
+            ctx.fillStyle = 'green';
+            ctx.font = '16px Arial';
+            
+            // Draw base measurements
+            ctx.fillText(`Width: ${dimensions.width}cm`, clampedBbox.x + 140, clampedBbox.y - 60);
+            ctx.fillText(`Height: ${dimensions.height}cm`, clampedBbox.x + 140, clampedBbox.y - 40);
+            // ctx.fillText(`Depth: ${dimensions.depth}cm`, clampedBbox.x + 140, clampedBbox.y - 20);
+            
+            // Draw confidence indicator
+            ctx.fillStyle = dimensions.confidence > 80 ? 'green' : 'orange';
+            ctx.fillText(`Confidence: ${dimensions.confidence}%`, 
+              clampedBbox.x + clampedBbox.width - 140, 
+              clampedBbox.y - 20
+            );
+
+            // Draw dimension lines
+            drawDimensionLines(ctx, clampedBbox, dimensions);
+          }
         }
+
+        lastRenderTime.current = now;
       }
 
       animationFrameId = requestAnimationFrame(renderLoop);
@@ -481,6 +480,18 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
     transition: 'transform 0.3s ease'
   };
 
+  // Update video element settings for better performance
+  const videoProps = {
+    ref: videoRef,
+    autoPlay: true,
+    playsInline: true,
+    muted: true,
+    style: {
+      ...videoStyle,
+      willChange: 'transform', // Optimize transform performance
+    }
+  };
+
   return (
     <div 
       ref={containerRef}
@@ -506,11 +517,7 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
       )}
 
       <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        style={videoStyle}
+        {...videoProps}
         onLoadedMetadata={() => {
           console.log('Video metadata loaded');
           handleResize();
