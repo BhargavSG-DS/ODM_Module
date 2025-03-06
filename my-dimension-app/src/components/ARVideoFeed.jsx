@@ -99,8 +99,8 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
       const constraints = {
         video: {
           deviceId: deviceId ? { exact: deviceId } : undefined,
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
           facingMode: 'environment'
         }
       };
@@ -185,7 +185,7 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
 
       sceneRef.current = new THREE.Scene();
       cameraRef.current = new THREE.PerspectiveCamera(
-        70,
+        50,
         canvas.width / canvas.height,
         0.01,
         20

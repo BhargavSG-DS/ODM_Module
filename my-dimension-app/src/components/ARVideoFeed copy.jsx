@@ -15,7 +15,7 @@ function ARVideoFeed({ arSession, setARSession, setDetectedObjects, selectedObje
     const startVideo = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          video: { facingMode: 'environment', width: { ideal: 1360 }, height: { ideal: 760 } },
         });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;

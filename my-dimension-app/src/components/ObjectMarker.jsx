@@ -27,7 +27,7 @@ const ObjectMarker = ({ object, onSelect, position, canvasWidth, canvasHeight })
   }, [isHovered, object, canvasWidth, canvasHeight]);
 
   const handleClick = () => {
-    if (object.score >= 0.6) {
+    if (object.score >= 0.7) {
       onSelect(object);
     }
   };
@@ -38,10 +38,10 @@ const ObjectMarker = ({ object, onSelect, position, canvasWidth, canvasHeight })
     top: `${position.y}%`,
     width: '12px',
     height: '12px',
-    backgroundColor: object.score >= 0.6 ? (isHovered ? '#00ff00' : '#ffffff') : '#ff6666',
-    border: `2px solid ${object.score >= 0.6 ? '#00ff00' : '#ff6666'}`,
+    backgroundColor: object.score >= 0.7 ? (isHovered ? '#00ff00' : '#ffffff') : '#ff6666',
+    border: `2px solid ${object.score >= 0.7 ? '#00ff00' : '#ff6666'}`,
     borderRadius: '50%',
-    cursor: object.score >= 0.6 ? 'pointer' : 'not-allowed',
+    cursor: object.score >= 0.7 ? 'pointer' : 'not-allowed',
     transform: 'translate(-50%, -50%)',
     zIndex: 15,
     transition: 'all 0.2s ease'
@@ -73,16 +73,15 @@ const ObjectMarker = ({ object, onSelect, position, canvasWidth, canvasHeight })
     >
       <div style={tooltipStyle}>
         <div>{object.class}</div>
-        <div>Confidence: {Math.round(object.score * 100)}%</div>
+        {/* <div>Confidence on type of object: {Math.round(object.score * 100)}%</div> */}
         {dimensions && (
           <>
-
             <div>Width: {dimensions.width}cm</div>
             <div>Height: {dimensions.height}cm</div>
             <div>Distance: {stateDistance}cm</div>
           </>
         )}
-        {object.score < 0.6 && (
+        {object.score < 0.7 && (
           <div style={{ color: '#ff6666', marginTop: '4px' }}>
             Low confidence
           </div>
