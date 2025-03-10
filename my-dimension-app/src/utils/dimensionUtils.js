@@ -20,8 +20,6 @@ export function calculateDimensions(bbox, distance, imageWidth, imageHeight, fov
 }
 
 function estimateDepth(width, height) {
-  // Estimate depth based on typical object proportions
-  // Using average of width and height as a base for depth estimation
   const avgDimension = (width + height) / 2;
   
   // Most objects have a depth that's proportional to their other dimensions

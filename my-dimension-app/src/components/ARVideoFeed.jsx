@@ -310,9 +310,12 @@ function ARVideoFeed({ setDetectedObjects, selectedObject, onCanvasClick, onRese
             ctx.font = '16px Arial';
             
             // Draw base measurements
-            ctx.fillText(`Width: ${dimensions.width}cm`, clampedBbox.x + 140, clampedBbox.y - 60);
-            ctx.fillText(`Height: ${dimensions.height}cm`, clampedBbox.x + 140, clampedBbox.y - 40);
-            // ctx.fillText(`Depth: ${dimensions.depth}cm`, clampedBbox.x + 140, clampedBbox.y - 20);
+            const widthInFeet = (dimensions.width / 30.48).toFixed(2); // Convert cm to feet
+            const heightInFeet = (dimensions.height / 30.48).toFixed(2); // Convert cm to feet
+            const depthInFeet = (dimensions.depth / 30.48).toFixed(2); // Convert cm to feet
+            ctx.fillText(`Width: ${widthInFeet}ft`, clampedBbox.x + 140, clampedBbox.y - 60);
+            ctx.fillText(`Length: ${heightInFeet}ft`, clampedBbox.x + 140, clampedBbox.y - 40);
+            ctx.fillText(`Depth: ${depthInFeet}ft`, clampedBbox.x + 140, clampedBbox.y - 20);
             
             // Draw confidence indicator
             ctx.fillStyle = dimensions.confidence > 80 ? 'green' : 'orange';
